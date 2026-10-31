@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Hörstatistik">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#121212">
+<title>Spotify Hörstatistik</title>
+<style>
+:root{--bg:#fff;--fg:#111;--mut:#666;--card:#f1f1f1;--acc:#1db954}
+@media (prefers-color-scheme:dark){:root{--bg:#121212;--fg:#eee;--mut:#9a9a9a;--card:#1e1e1e}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--fg)}
+body{font-family:-apple-system,system-ui,sans-serif;font-size:17px;
+  padding:calc(env(safe-area-inset-top,0px) + 14px) calc(env(safe-area-inset-right,0px) + 16px) calc(env(safe-area-inset-bottom,0px) + 90px) calc(env(safe-area-inset-left,0px) + 16px);
+  max-width:1000px;margin:auto;-webkit-user-select:none;user-select:none;overscroll-behavior-y:contain}
+h1{font-size:1.5rem;margin:6px 0 12px}
+h2{font-size:1.1rem;margin:0 0 8px}
+.card{background:var(--card);border-radius:16px;padding:16px;margin:12px 0}
+button,input{font:inherit;font-size:17px;min-height:48px;padding:10px 16px;border-radius:12px;border:1px solid #8885;background:var(--bg);color:var(--fg);touch-action:manipulation}
+button{background:var(--acc);color:#000;border:0;font-weight:600}
+button:active{opacity:.7;transform:scale(.97)}
+button.sec{background:var(--card);color:var(--fg);border:1px solid #8885}
+input{-webkit-user-select:text;user-select:text}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center}
+.kpi b{display:block;font-size:2rem}.kpi span,.mut{color:var(--mut);font-size:.9rem}
+.row{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid #8883;min-height:44px;align-items:center}
+.row:last-child{border:0}
+.row .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bars{display:flex;align-items:flex-end;gap:3px;height:110px}
+.bars div{flex:1;background:var(--acc);border-radius:3px 3px 0 0;min-height:2px}
+.lbl{display:flex;justify-content:space-between;font-size:.75rem;color:var(--mut);margin-top:4px}
+.daynav{display:flex;gap:8px;align-items:center;justify-content:center;margin:8px 0}
+.daynav button{width:56px;padding:0;font-size:22px}
+.daynav input{flex:1;max-width:220px;text-align:center}
+.grid{display:grid;grid-template-columns:1fr;gap:0 16px}
+@media (min-width:760px){.grid{grid-template-columns:1fr 1fr}}
+.hide{display:none}
+#bar{position:fixed;left:0;right:0;bottom:0;display:flex;gap:10px;justify-content:center;
+  padding:10px 16px calc(env(safe-area-inset-bottom,0px) + 10px);background:var(--bg);border-top:1px solid #8883}
+#bar button{flex:1;max-width:240px}
+code{font-size:.8rem;word-break:break-all;-webkit-user-select:text;user-select:text}
+</style>
+</head>
+<body>
+<h1>🎧 Hörstatistik</h1>
+
+<div id="setup" class="card">
+  <p><b>Einrichtung:</b> Trage diese Redirect URI in deiner Spotify-App ein:</p>
+  <p><code id="redir"></code></p>
+  <input id="cid" placeholder="Client ID" style="width:100%" autocapitalize="off" autocorrect="off">
+  <p><button id="login" style="width:100%">Mit Spotify verbinden</button></p>
+</div>
+
+<div id="main" class="hide">
+  <p class="mut" id="status" style="margin:0 0 6px"></p>
+  <div class="daynav">
+    <button class="sec" id="prev" aria-label="Vorheriger Tag">‹</button>
+    <input type="date" id="day">
+    <button class="sec" id="next" aria-label="Nächster Tag">›</button>
+  </div>
+
+  <div class="card kpis">
+    <div class="kpi"><b id="k1">0</b><span>Songs</span></div>
+    <div class="kpi"><b id="k2">0</b><span>Minuten</span></div>
+    <div class="kpi"><b id="k3">0</b><span>Künstler</span></div>
+  </div>
+
+  <div class="card"><h2>Uhrzeiten</h2>
+    <div class="bars" id="hours"></div>
+    <div class="lbl"><span>0</span><span>6</span><span>12</span><span>18</span><span>23</span></div></div>
+
+  <div class="grid">
+    <div class="card"><h2>Top Künstler</h2><div id="artists"></div></div>
+    <div class="card"><h2>Top Songs</h2><div id="tracks"></div></div>
+    <div class="card"><h2>Top Genres</h2><div id="genres"></div></div>
+    <div class="card"><h2>Alle Tage</h2><div id="days"></div></div>
+  </div>
+
+  <div class="card">
+    <button class="sec" id="csv" style="width:100%;margin-bottom:10px">CSV exportieren</button>
+    <button class="sec" id="logout" style="width:100%">Abmelden</button>
+  </div>
+  <div id="bar"><button id="sync">↻ Jetzt abrufen</button></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const REDIRECT = location.origin + location.pathname;
+$('redir').textContent = REDIRECT;
+const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d } catch { return d } };
+const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} };
+
+let history_ = load('history', []);   // {t, id, name, artist, artistId, dur}
+let genres = load('genres', {});
+let auth = load('auth', null);
+let clientId = load('cid', '');
+let lastSync = load('lastSync', 0);
+$('cid').value = clientId;
+
+// ---------- Auth (PKCE) ----------
+const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+async function login() {
+  clientId = $('cid').value.trim();
+  if (!clientId) return alert('Bitte Client ID eingeben');
+  save('cid', clientId);
+  const verifier = b64url(crypto.getRandomValues(new Uint8Array(48)));
+  save('verifier', verifier);
+  const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+  const p = new URLSearchParams({client_id: clientId, response_type: 'code', redirect_uri: REDIRECT,
+    scope: 'user-read-recently-played', code_challenge_method: 'S256', code_challenge: challenge});
+  location.href = 'https://accounts.spotify.com/authorize?' + p;
+}
+async function token(body) {
+  const r = await fetch('https://accounts.spotify.com/api/token', {method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: new URLSearchParams(body)});
+  if (!r.ok) throw new Error('Token-Fehler ' + r.status);
+  const j = await r.json();
+  auth = {access: j.access_token, refresh: j.refresh_token || auth?.refresh, exp: Date.now() + j.expires_in * 1000 - 60000};
+  save('auth', auth);
+}
+async function ensureToken() {
+  if (!auth) throw new Error('Nicht angemeldet');
+  if (Date.now() > auth.exp) await token({grant_type: 'refresh_token', refresh_token: auth.refresh, client_id: clientId});
+}
+async function api(path) {
+  await ensureToken();
+  const r = await fetch('https://api.spotify.com/v1' + path, {headers: {Authorization: 'Bearer ' + auth.access}});
+  if (!r.ok) throw new Error('API ' + r.status);
+  return r.json();
+}
+
+// ---------- Sync ----------
+let syncing = false;
+async function sync() {
+  if (syncing) return;
+  syncing = true;
+  try {
+    $('status').textContent = 'Rufe ab …';
+    const j = await api('/me/player/recently-played?limit=50');
+    const seen = new Set(history_.map(h => h.t + h.id));
+    let added = 0;
+    for (const it of j.items) {
+      const e = {t: it.played_at, id: it.track.id, name: it.track.name,
+        artist: it.track.artists[0].name, artistId: it.track.artists[0].id, dur: it.track.duration_ms};
+      if (!seen.has(e.t + e.id)) { history_.push(e); added++; }
+    }
+    history_.sort((a, b) => a.t.localeCompare(b.t));
+    save('history', history_);
+    await fetchGenres();
+    lastSync = Date.now(); save('lastSync', lastSync);
+    status(added);
+    render();
+  } catch (e) { $('status').textContent = 'Fehler: ' + e.message; }
+  syncing = false;
+}
+function status(added) {
+  $('status').textContent = `Zuletzt: ${new Date(lastSync).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})}` +
+    (added != null ? ` · ${added} neu` : '') + ` · ${history_.length} gesamt`;
+}
+async function fetchGenres() {
+  const missing = [...new Set(history_.map(h => h.artistId))].filter(id => !(id in genres));
+  for (const id of missing.slice(0, 40)) {
+    try { genres[id] = (await api('/artists/' + id)).genres || []; } catch { genres[id] = []; }
+  }
+  save('genres', genres);
+}
+
+// ---------- Auswertung ----------
+const pad = n => String(n).padStart(2, '0');
+const dayKey = iso => { const d = new Date(iso); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const top = (arr, n = 5) => {
+  const m = {}; arr.forEach(x => m[x] = (m[x] || 0) + 1);
+  return Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, n);
+};
+const list = (el, items) => el.innerHTML = items.length
+  ? items.map(([k, v]) => `<div class="row"><span class="n">${esc(k)}</span><span class="mut">${v}×</span></div>`).join('')
+  : '<span class="mut">Keine Daten</span>';
+
+function render() {
+  const day = $('day').value;
+  const d = history_.filter(h => dayKey(h.t) === day);
+  $('k1').textContent = d.length;
+  $('k2').textContent = Math.round(d.reduce((s, h) => s + h.dur, 0) / 60000);
+  $('k3').textContent = new Set(d.map(h => h.artistId)).size;
+  const hrs = Array(24).fill(0);
+  d.forEach(h => hrs[new Date(h.t).getHours()]++);
+  const mx = Math.max(1, ...hrs);
+  $('hours').innerHTML = hrs.map((v, i) => `<div title="${i} Uhr: ${v}" style="height:${v/mx*100}%"></div>`).join('');
+  list($('artists'), top(d.map(h => h.artist)));
+  list($('tracks'), top(d.map(h => h.name + ' – ' + h.artist)));
+  list($('genres'), top(d.flatMap(h => genres[h.artistId] || [])));
+  const per = {};
+  history_.forEach(h => { const k = dayKey(h.t); per[k] ??= {n: 0, ms: 0}; per[k].n++; per[k].ms += h.dur; });
+  $('days').innerHTML = Object.entries(per).sort().reverse().slice(0, 30).map(([k, v]) =>
+    `<div class="row" data-d="${k}" style="cursor:pointer"><span>${k.split('-').reverse().join('.')}</span><span class="mut">${v.n} Songs · ${Math.round(v.ms/60000)} Min</span></div>`).join('')
+    || '<span class="mut">Noch keine Daten</span>';
+}
+
+function shiftDay(n) {
+  const [y, m, d] = $('day').value.split('-').map(Number);
+  const nd = new Date(y, m - 1, d + n);
+  $('day').value = `${nd.getFullYear()}-${pad(nd.getMonth()+1)}-${pad(nd.getDate())}`;
+  render();
+}
+
+function exportCsv() {
+  const rows = [['played_at','track','artist','duration_ms','genres'],
+    ...history_.map(h => [h.t, h.name, h.artist, h.dur, (genres[h.artistId]||[]).join('|')])];
+  const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g,'""') + '"').join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
+  a.download = 'spotify-history.csv'; a.click();
+}
+
+// ---------- Start ----------
+function showMain() {
+  $('setup').classList.add('hide'); $('main').classList.remove('hide');
+  $('day').value = dayKey(new Date().toISOString());
+  $('day').onchange = render;
+  $('prev').onclick = () => shiftDay(-1);
+  $('next').onclick = () => shiftDay(1);
+  $('days').onclick = e => { const r = e.target.closest('[data-d]'); if (r) { $('day').value = r.dataset.d; render(); scrollTo({top: 0, behavior: 'smooth'}); } };
+  if (lastSync) status();
+  render(); sync();
+  setInterval(sync, 60 * 60 * 1000);
+  // Beim Zurückkehren in die App sofort abrufen (iPadOS pausiert Hintergrund-Tabs)
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && Date.now() - lastSync > 10 * 60 * 1000) sync();
+  });
+}
+$('login').onclick = login;
+$('sync').onclick = sync;
+$('csv').onclick = exportCsv;
+$('logout').onclick = () => { localStorage.removeItem('auth'); location.href = REDIRECT; };
+
+(async () => {
+  const code = new URLSearchParams(location.search).get('code');
+  if (code) {
+    try {
+      await token({grant_type: 'authorization_code', code, redirect_uri: REDIRECT, client_id: clientId, code_verifier: load('verifier', '')});
+    } catch (e) { alert(e.message); }
+    window.history.replaceState({}, '', REDIRECT);
+  }
+  if (auth) showMain();
+})();
+</script>
+</body>
+</html>
